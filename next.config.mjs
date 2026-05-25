@@ -16,7 +16,7 @@ const nextConfig = {
     ],
   },
   experimental: {
-    serverComponentsExternalPackages: ['playwright', 'node-cache'],
+    serverComponentsExternalPackages: ['playwright', 'playwright-core', '@sparticuz/chromium', 'node-cache'],
   },
 };
 

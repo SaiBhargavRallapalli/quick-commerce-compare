@@ -1,16 +1,9 @@
-// Must be set before playwright resolves the browser executable path.
-// PLAYWRIGHT_BROWSERS_PATH=0 → browser installed alongside playwright package in
-// node_modules/playwright-core/.local-browsers/ which is bundled into the Lambda.
-// Without this, the build container installs to ~/.cache/ms-playwright/ (a different
-// home directory than the Lambda sandbox /home/sbx_user1051/).
-process.env.PLAYWRIGHT_BROWSERS_PATH = '0'
-
 import { chromium, Browser, BrowserContext } from 'playwright'
 
 let browser: Browser | null = null
 let launchPromise: Promise<Browser> | null = null
 
-const LAUNCH_ARGS = [
+const DEV_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
   '--disable-dev-shm-usage',
@@ -18,23 +11,45 @@ const LAUNCH_ARGS = [
   '--disable-gpu',
   '--no-first-run',
   '--no-zygote',
-  '--single-process', // Required for Lambda — no /dev/shm
+  '--single-process',
   '--disable-blink-features=AutomationControlled',
   '--disable-infobars',
   '--window-size=1280,800',
 ]
 
+async function getLaunchOptions(): Promise<Parameters<typeof chromium.launch>[0]> {
+  const isServerless = !!(
+    process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.AWS_EXECUTION_ENV
+  )
+
+  if (isServerless) {
+    const chromiumBinary = (await import('@sparticuz/chromium')).default
+    return {
+      executablePath: await chromiumBinary.executablePath(),
+      args: [...chromiumBinary.args, '--disable-blink-features=AutomationControlled'],
+      headless: true,
+    }
+  }
+
+  // Local development — use playwright's installed browser
+  process.env.PLAYWRIGHT_BROWSERS_PATH = '0'
+  return { headless: true, args: DEV_ARGS }
+}
+
 export async function getBrowser(): Promise<Browser> {
   if (browser?.isConnected()) return browser
-
   if (launchPromise) return launchPromise
 
-  launchPromise = chromium.launch({ headless: true, args: LAUNCH_ARGS }).then((b) => {
-    browser = b
-    launchPromise = null
-    b.on('disconnected', () => { browser = null })
-    return b
-  })
+  launchPromise = getLaunchOptions()
+    .then(opts => chromium.launch(opts))
+    .then(b => {
+      browser = b
+      launchPromise = null
+      b.on('disconnected', () => { browser = null })
+      return b
+    })
 
   return launchPromise
 }
@@ -56,7 +71,6 @@ export async function createContext(lat: number, lon: number): Promise<BrowserCo
     javaScriptEnabled: true,
   })
 
-  // Hide webdriver footprint
   await ctx.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
     Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] })
