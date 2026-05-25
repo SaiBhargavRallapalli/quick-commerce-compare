@@ -20,12 +20,10 @@ export class SwiggyScraper extends BaseScraper {
     const products: Product[] = []
     let capturedStoreId: string | null = null
 
-    // Capture all JSON that looks like products
     const unsubscribe = this.onAnyJson(page, (json, url) => {
-      // Capture the storeId from the home API
-      if (url.includes('/instamart/home/') || url.includes('/instamart/home/v')) {
-        const body = JSON.stringify(json)
-        const m = body.match(/"storeId"\s*:\s*"?(\d+)"?/)
+      // Capture storeId from home API request URL
+      if (url.includes('/instamart/home')) {
+        const m = url.match(/storeId=(\d+)/)
         if (m) capturedStoreId = m[1]
       }
 
@@ -36,41 +34,57 @@ export class SwiggyScraper extends BaseScraper {
     })
 
     try {
-      // Step 1: Set location data
       await page.context().addCookies([
         { name: 'lat', value: String(location.lat), domain: '.swiggy.com', path: '/' },
         { name: 'lng', value: String(location.lon), domain: '.swiggy.com', path: '/' },
       ])
 
-      // Step 2: Load homepage to get storeId
+      // Step 1: Load homepage — fires home/v2 API which contains storeId in URL params
       await page.goto('https://www.swiggy.com/instamart', {
-        waitUntil: 'domcontentloaded', timeout: 15000
-      })
-      await page.waitForTimeout(3000) // let home/v2 API fire
+        waitUntil: 'domcontentloaded', timeout: 20000
+      }).catch(() => {})
+      await page.waitForTimeout(5000)
 
-      // Step 3: Navigate to search (now that storeId is loaded in session)
-      const searchUrl = capturedStoreId
-        ? `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(query)}&storeId=${capturedStoreId}`
-        : `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(query)}`
+      // Step 2: Inject storeId into localStorage so search page picks it up
+      if (capturedStoreId) {
+        await page.evaluate((sid) => {
+          try {
+            localStorage.setItem('storeId', sid)
+            localStorage.setItem('primaryStoreId', sid)
+          } catch { /* ignore */ }
+        }, capturedStoreId)
+      }
 
-      // Swiggy SPA may abort the navigation internally — catch and continue waiting for API calls
-      await page.goto(searchUrl, { waitUntil: 'commit', timeout: 20000 }).catch(() => {})
+      // Step 3: Use in-browser fetch (has all session cookies + WAF tokens)
+      const sid = capturedStoreId || '1403020'
+      const inBrowserProducts = await this._inBrowserSearch(page, query, sid)
+      if (inBrowserProducts.length > 0) return inBrowserProducts
 
-      // Give the SPA time to fire search API calls even if navigation was aborted
-      await page.waitForTimeout(2000)
+      // Step 4: Try pushState navigation to trigger the SPA search component
+      await page.evaluate((params: { q: string; sid: string }) => {
+        window.history.pushState({}, '', `/instamart/search?query=${encodeURIComponent(params.q)}&storeId=${params.sid}`)
+        window.dispatchEvent(new PopStateEvent('popstate', { state: {} }))
+      }, { q: query, sid })
+      await page.waitForTimeout(3000)
 
       await Promise.race([
         this._waitFor(products, 3),
-        page.waitForTimeout(12000),
+        page.waitForTimeout(8000),
       ])
 
       if (products.length > 0) return products
 
-      // Try direct search API if we have a storeId
-      if (capturedStoreId) {
-        const directProducts = await this._directSearchAPI(capturedStoreId, query)
-        if (directProducts.length > 0) return directProducts
-      }
+      // Step 5: Direct URL navigation (ERR_ABORTED is ok — SPA may still render)
+      const searchUrl = `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(query)}&storeId=${sid}`
+      await page.goto(searchUrl, { waitUntil: 'commit', timeout: 15000 }).catch(() => {})
+      await page.waitForTimeout(4000)
+
+      await Promise.race([
+        this._waitFor(products, 3),
+        page.waitForTimeout(8000),
+      ])
+
+      if (products.length > 0) return products
 
       return await this.extractByPriceDOM(page, 'swiggy', searchUrl)
     } finally {
@@ -78,23 +92,33 @@ export class SwiggyScraper extends BaseScraper {
     }
   }
 
-  private async _directSearchAPI(storeId: string, query: string): Promise<Product[]> {
-    // Swiggy Instamart search API (discovered from network analysis)
-    const url = `https://www.swiggy.com/api/instamart/search?query=${encodeURIComponent(query)}&storeId=${storeId}&primaryStoreId=${storeId}&offset=0`
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'application/json, */*',
-        Referer: 'https://www.swiggy.com/instamart',
-        Cookie: 'swiggyUserHasLoggedIn=false',
-      },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok) return []
-    const json = await res.json()
-    return extractProductsFromJson(json, 'swiggy', (o) =>
-      `https://www.swiggy.com/instamart/item/${o.product_id ?? o.item_id ?? o.id ?? ''}`
-    )
+  /**
+   * Execute the search API from within the browser context — this way the page's
+   * own cookies (including WAF session tokens) are automatically included.
+   */
+  private async _inBrowserSearch(page: Page, query: string, storeId: string): Promise<Product[]> {
+    try {
+      const json = await page.evaluate(async ({ q, sid }: { q: string; sid: string }) => {
+        const url = `/api/instamart/search/v2?offset=0&query=${encodeURIComponent(q)}&storeId=${sid}&primaryStoreId=${sid}&ageConsent=false`
+        try {
+          const res = await fetch(url, {
+            headers: { 'Accept': 'application/json', 'x-device-id': 'web' },
+            credentials: 'include',
+          })
+          if (!res.ok) return null
+          return await res.json()
+        } catch {
+          return null
+        }
+      }, { q: query, sid: storeId }) as unknown
+
+      if (!json) return []
+      return extractProductsFromJson(json, 'swiggy', (o) =>
+        `https://www.swiggy.com/instamart/item/${o.product_id ?? o.item_id ?? o.id ?? ''}`
+      )
+    } catch {
+      return []
+    }
   }
 
   private _waitFor(arr: Product[], min: number): Promise<void> {

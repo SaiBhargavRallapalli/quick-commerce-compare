@@ -1,0 +1,30 @@
+# QuickPrice
+
+> Real-time grocery price comparison across all major quick commerce platforms in India.
+
+QuickPrice lets you compare product prices simultaneously across Blinkit, Zepto, Swiggy Instamart, BigBasket, JioMart, DMart Ready, and First Club. Just search for any product (milk, eggs, bread, rice, etc.) and get live prices from all 7 platforms instantly.
+
+## Features
+- Real-time prices fetched live from each platform
+- Location-aware results (pincode or GPS auto-detection)
+- Lowest price highlighted at the top
+- Covers 7 major quick commerce platforms in India
+- No login required
+
+## Platforms Covered
+- Blinkit (formerly Grofers) — 10-15 min delivery
+- Zepto — 10 min delivery
+- Swiggy Instamart — 10-15 min delivery
+- BigBasket — same day / scheduled delivery
+- JioMart — same day / 2 hour delivery
+- DMart Ready — same day delivery
+- First Club — scheduled delivery
+
+## How to Use
+1. Enter your location (auto-detected or select city)
+2. Search for any grocery product
+3. See prices from all platforms sorted by lowest first
+4. Click any product to buy directly on that platform
+
+## Data
+Prices are fetched in real-time. Results may vary by location and availability.

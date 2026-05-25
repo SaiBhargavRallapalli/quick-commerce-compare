@@ -6,6 +6,8 @@ export const SCRAPE_TIMEOUT = 30_000
 
 export abstract class BaseScraper {
   abstract readonly platformId: PlatformId
+  /** If true, scraper uses plain HTTP and doesn't need a BrowserContext */
+  readonly isHttpOnly: boolean = false
 
   abstract scrape(
     query: string,
@@ -209,29 +211,34 @@ export function extractProductsFromJson(
 
     const o = obj as Record<string, unknown>
 
-    const hasId = o.id != null || o.product_id != null || o.sku != null ||
-                  o.item_id != null || o.zpid != null || o.uid != null
+    const hasId = o.id != null || o.product_id != null || o.productId != null ||
+                  o.sku != null || o.item_id != null || o.itemId != null ||
+                  o.zpid != null || o.uid != null
     const hasName = typeof o.name === 'string' || typeof o.product_name === 'string' ||
-                    typeof o.desc === 'string' || typeof o.display_name === 'string' || typeof o.title === 'string'
+                    typeof o.productName === 'string' || typeof o.itemName === 'string' ||
+                    typeof o.desc === 'string' || typeof o.display_name === 'string' ||
+                    typeof o.displayName === 'string' || typeof o.title === 'string'
     const hasPrice = o.price != null || o.sp != null || o.selling_price != null ||
-                     o.offer_price != null || o.discounted_price != null || o.final_price != null ||
-                     o.offerPrice != null || o.special_price != null || o.effective_price != null ||
-                     o.sale_price != null
+                     o.sellingPrice != null || o.offer_price != null || o.offerPrice != null ||
+                     o.discounted_price != null || o.final_price != null ||
+                     o.special_price != null || o.effective_price != null ||
+                     o.sale_price != null || o.salePrice != null
 
     if (hasId && hasName && hasPrice) {
       const price = extractNumericPrice(
-        o.discounted_price ?? o.offer_price ?? o.sp ?? o.selling_price ??
+        o.discounted_price ?? o.offer_price ?? o.sp ?? o.selling_price ?? o.sellingPrice ??
         o.final_price ?? o.offerPrice ?? o.special_price ?? o.effective_price ??
-        o.sale_price ?? o.price ?? 0
+        o.sale_price ?? o.salePrice ?? o.price ?? 0
       )
 
       const mrp = extractNumericPrice(
         o.mrp ?? o.market_price ?? o.original_price ?? o.actualPrice ??
-        o.compare_at_price ?? o.marked_price ?? 0
+        o.compare_at_price ?? o.marked_price ?? o.mrpPrice ?? 0
       )
 
       const name = String(
-        o.name ?? o.product_name ?? o.desc ?? o.display_name ?? o.title ?? ''
+        o.name ?? o.product_name ?? o.productName ?? o.itemName ??
+        o.desc ?? o.display_name ?? o.displayName ?? o.title ?? ''
       ).trim()
 
       const brandRaw = o.brand_name ?? (o.brand && typeof o.brand === 'object' ? (o.brand as Record<string, unknown>).name : o.brand)
@@ -241,7 +248,7 @@ export function extractProductsFromJson(
 
       if (price > 0 && name.length > 1 && products.length < 20) {
         products.push({
-          id: `${platformId}-${o.id ?? o.product_id ?? o.sku ?? o.item_id ?? o.uid ?? products.length}`,
+          id: `${platformId}-${o.id ?? o.product_id ?? o.productId ?? o.sku ?? o.item_id ?? o.itemId ?? o.uid ?? products.length}`,
           name,
           brand,
           price,

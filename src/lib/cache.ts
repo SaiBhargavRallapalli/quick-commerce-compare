@@ -1,25 +1,28 @@
 import NodeCache from 'node-cache'
 import type { Product } from './types'
 
-// Global singleton cache — survives across API requests in the same process
-const cache = new NodeCache({
+// In-process cache — works on long-lived servers and local dev.
+// On Vercel serverless, each cold start gets a fresh cache.
+// To persist across invocations on Vercel, set REDIS_URL in env vars (Upstash/Vercel KV).
+const memCache = new NodeCache({
   stdTTL: 600,       // 10 minute default TTL
-  checkperiod: 120,  // check for expired keys every 2 min
-  useClones: false,  // skip cloning for performance
+  checkperiod: 120,
+  useClones: false,
 })
 
+function cacheKey(platform: string, query: string, pincode: string): string {
+  return `${platform}:${query.toLowerCase().trim()}:${pincode}`
+}
+
 export function getCachedProducts(platform: string, query: string, pincode: string): Product[] | null {
-  const key = `${platform}:${query.toLowerCase().trim()}:${pincode}`
-  return cache.get<Product[]>(key) ?? null
+  return memCache.get<Product[]>(cacheKey(platform, query, pincode)) ?? null
 }
 
 export function setCachedProducts(platform: string, query: string, pincode: string, products: Product[]): void {
-  // Never cache empty results — forces a re-scrape next time
-  if (products.length === 0) return
-  const key = `${platform}:${query.toLowerCase().trim()}:${pincode}`
-  cache.set(key, products)
+  if (products.length === 0) return  // never cache empty results
+  memCache.set(cacheKey(platform, query, pincode), products)
 }
 
 export function cacheStats() {
-  return cache.getStats()
+  return memCache.getStats()
 }

@@ -1,6 +1,7 @@
 import pLimit from 'p-limit'
 import type { PlatformResult, PlatformId } from '@/lib/types'
 import type { Location } from '@/lib/types'
+import type { BrowserContext } from 'playwright'
 import { createContext } from '@/lib/browser'
 import { getCachedProducts, setCachedProducts } from '@/lib/cache'
 import { SCRAPE_TIMEOUT } from './base'
@@ -11,6 +12,8 @@ import { SwiggyScraper } from './swiggy'
 import { JioMartScraper } from './jiomart'
 import { DmartScraper } from './dmart'
 import { FirstClubScraper } from './firstclub'
+import { FlipkartMinutesScraper } from './flipkart-minutes'
+import { AmazonNowScraper } from './amazon-now'
 
 const SCRAPERS = [
   new BlinkitScraper(),
@@ -20,75 +23,108 @@ const SCRAPERS = [
   new JioMartScraper(),
   new DmartScraper(),
   new FirstClubScraper(),
+  new FlipkartMinutesScraper(),
+  new AmazonNowScraper(),
 ]
 
 // Max 3 concurrent Playwright pages to avoid OOM
 const limit = pLimit(3)
 
+type Tagged = { result: PlatformResult; idx: number }
+
+function makeTask(
+  scraper: (typeof SCRAPERS)[number],
+  idx: number,
+  query: string,
+  location: Location,
+  getContext: () => Promise<BrowserContext>
+): Promise<Tagged> {
+  return limit(async (): Promise<Tagged> => {
+    const startMs = Date.now()
+    const platform = scraper.platformId as PlatformId
+
+    const cached = getCachedProducts(platform, query, location.pincode)
+    if (cached) {
+      return { result: { platform, products: cached, status: 'success', durationMs: 0 }, idx }
+    }
+
+    try {
+      // HTTP-only scrapers skip browser entirely
+      const context = scraper.isHttpOnly
+        ? ({} as BrowserContext)
+        : await getContext()
+
+      const products = await Promise.race([
+        scraper.scrape(query, location, context),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), SCRAPE_TIMEOUT)
+        ),
+      ])
+
+      setCachedProducts(platform, query, location.pincode, products)
+
+      return {
+        result: { platform, products, status: 'success', durationMs: Date.now() - startMs },
+        idx,
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'Unknown error'
+      return {
+        result: {
+          platform,
+          products: [],
+          status: error === 'Timeout' ? 'timeout' : 'error',
+          error,
+          durationMs: Date.now() - startMs,
+        },
+        idx,
+      }
+    }
+  })
+}
+
 /**
  * Run all scrapers in parallel and yield results as each one finishes.
+ * HTTP-only scrapers start immediately; browser scrapers share one context
+ * that is lazily initialized (so HTTP results arrive first).
  */
 export async function* searchAllPlatforms(
   query: string,
   location: Location
 ): AsyncGenerator<PlatformResult> {
-  const browserContext = await createContext(location.lat, location.lon)
+  let browserContext: BrowserContext | undefined
+  let browserPromise: Promise<BrowserContext> | undefined
+
+  const getContext = (): Promise<BrowserContext> => {
+    if (browserContext !== undefined) return Promise.resolve(browserContext)
+    if (browserPromise === undefined) {
+      browserPromise = createContext(location.lat, location.lon).then(ctx => {
+        browserContext = ctx
+        return ctx
+      })
+    }
+    return browserPromise
+  }
+
+  // Kick off browser creation in the background so it's warm by the time
+  // Playwright scrapers need it — HTTP scrapers don't wait for it at all
+  getContext().catch(() => {})
+
+  const tasks = SCRAPERS.map((scraper, idx) =>
+    makeTask(scraper, idx, query, location, getContext)
+  )
 
   try {
-    type Tagged = { result: PlatformResult; idx: number }
-
-    // Build individual task promises (each resolves to { result, idx })
-    const tasks: Promise<Tagged>[] = SCRAPERS.map((scraper, idx) =>
-      limit(async (): Promise<Tagged> => {
-        const startMs = Date.now()
-        const platform = scraper.platformId as PlatformId
-
-        // Cache hit
-        const cached = getCachedProducts(platform, query, location.pincode)
-        if (cached) {
-          return { result: { platform, products: cached, status: 'success', durationMs: 0 }, idx }
-        }
-
-        try {
-          const products = await Promise.race([
-            scraper.scrape(query, location, browserContext),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout')), SCRAPE_TIMEOUT)
-            ),
-          ])
-
-          setCachedProducts(platform, query, location.pincode, products)
-
-          return {
-            result: { platform, products, status: 'success', durationMs: Date.now() - startMs },
-            idx,
-          }
-        } catch (err) {
-          const error = err instanceof Error ? err.message : 'Unknown error'
-          return {
-            result: {
-              platform,
-              products: [],
-              status: error === 'Timeout' ? 'timeout' : 'error',
-              error,
-              durationMs: Date.now() - startMs,
-            },
-            idx,
-          }
-        }
-      })
-    )
-
-    // Yield as each task completes using a racing dequeue pattern
     const pending = new Map(tasks.map((t, i) => [i, t]))
 
     while (pending.size > 0) {
-      // Race all remaining tasks
       const { result, idx } = await Promise.race(pending.values())
       pending.delete(idx)
       yield result
     }
   } finally {
-    await browserContext.close()
+    if (browserContext !== undefined) {
+      await browserContext.close().catch(() => {})
+    }
   }
 }

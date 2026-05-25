@@ -6,6 +6,8 @@ export type PlatformId =
   | 'jiomart'
   | 'dmart'
   | 'firstclub'
+  | 'flipkart'
+  | 'amazon'
 
 export interface Platform {
   id: PlatformId

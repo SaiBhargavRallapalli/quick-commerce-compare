@@ -78,6 +78,28 @@ export const PLATFORMS: Platform[] = [
     deliveryTime: 'Next day',
     logoEmoji: '🟤',
   },
+  {
+    id: 'flipkart',
+    name: 'Flipkart Grocery',
+    tagline: 'Grocery delivered fast',
+    color: '#2874F0',
+    bgLight: '#E8F0FE',
+    textColor: '#FFFFFF',
+    website: 'https://www.flipkart.com/grocery-supermart-store',
+    deliveryTime: 'Same day',
+    logoEmoji: '🔷',
+  },
+  {
+    id: 'amazon',
+    name: 'Amazon Fresh',
+    tagline: 'Fresh groceries delivered',
+    color: '#FF9900',
+    bgLight: '#FFF8E8',
+    textColor: '#232F3E',
+    website: 'https://www.amazon.in/fresh',
+    deliveryTime: 'Same day',
+    logoEmoji: '📦',
+  },
 ]
 
 export const PLATFORM_MAP = Object.fromEntries(

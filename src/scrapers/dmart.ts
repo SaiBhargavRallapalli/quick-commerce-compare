@@ -1,102 +1,119 @@
-import type { BrowserContext, Page } from 'playwright'
+import type { BrowserContext } from 'playwright'
 import type { Product } from '@/lib/types'
 import type { Location } from '@/lib/types'
-import { BaseScraper, extractProductsFromJson } from './base'
+import { BaseScraper } from './base'
 
-// DMart serves by store — storeId 10151 covers most metros; Playwright fallback will capture the correct one
+const DIGITAL_BASE = 'https://digital.dmart.in/api'
+const CDN_BASE = 'https://cdn.dmart.in/images/products'
 const DEFAULT_STORE_ID = '10151'
+
+// Cache pincode → storeId lookups in-process
+const storeIdCache = new Map<string, string>()
 
 export class DmartScraper extends BaseScraper {
   readonly platformId = 'dmart' as const
+  readonly isHttpOnly = true
 
-  async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
-    try {
-      const products = await this._directAPI(query)
-      if (products.length > 0) return products
-    } catch { /* fall through */ }
-
-    const page = await context.newPage()
-    try {
-      await this.blockHeavyResources(page)
-      return await this._scrapePlaywright(page, query, location)
-    } finally {
-      await page.close()
-    }
+  // BrowserContext is unused — DMart API is accessible via plain HTTP
+  async scrape(query: string, location: Location, _context: BrowserContext): Promise<Product[]> {
+    const storeId = await this._getStoreId(location.pincode)
+    return this._searchAPI(query, storeId)
   }
 
-  private async _directAPI(query: string): Promise<Product[]> {
-    const q = encodeURIComponent(query)
+  private async _getStoreId(pincode: string): Promise<string> {
+    const cached = storeIdCache.get(pincode)
+    if (cached) return cached
 
-    // digital.dmart.in is the actual API host; try several known endpoint patterns
-    const endpoints = [
-      `https://digital.dmart.in/api/v1/listing?q=${q}&storeId=${DEFAULT_STORE_ID}&pageNo=0&size=24&channel=WEB`,
-      `https://digital.dmart.in/api/v1/search?q=${q}&storeId=${DEFAULT_STORE_ID}&page=0&size=24`,
-      `https://digital.dmart.in/api/v1/search/searchProducts?q=${q}&storeId=${DEFAULT_STORE_ID}&pageNo=1&size=24`,
-    ]
-
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'application/json, */*',
-      'Referer': 'https://www.dmart.in/',
-      'Origin': 'https://www.dmart.in',
-    }
-
-    for (const url of endpoints) {
-      const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) })
-      if (!res.ok) continue
-      const json = await res.json()
-      const products = extractProductsFromJson(json, 'dmart', (o) =>
-        `https://www.dmart.in${o.urlPath ?? `/product/${o.uniqueId ?? o.id ?? ''}`}`
+    try {
+      const res = await fetch(
+        `${DIGITAL_BASE}/v1/pincodes?pinCode=${encodeURIComponent(pincode)}&storeType=all`,
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Referer': 'https://www.dmart.in/',
+          },
+          signal: AbortSignal.timeout(5000),
+        }
       )
-      if (products.length > 0) return products
+      if (!res.ok) return DEFAULT_STORE_ID
+      const json = await res.json() as { StorePincodeDetails?: Array<{ StoreId: string; Pincode: string }> }
+      const match = json.StorePincodeDetails?.find(s => s.Pincode === pincode)
+      const storeId = match?.StoreId ?? json.StorePincodeDetails?.[0]?.StoreId ?? DEFAULT_STORE_ID
+      storeIdCache.set(pincode, storeId)
+      return storeId
+    } catch {
+      return DEFAULT_STORE_ID
     }
-    return []
   }
 
-  private async _scrapePlaywright(page: Page, query: string, location: Location): Promise<Product[]> {
-    const products: Product[] = []
-
-    const unsubscribe = this.onAnyJson(page, (json) => {
-      const found = extractProductsFromJson(json, 'dmart', (o) =>
-        `https://www.dmart.in${o.urlPath ?? `/product/${o.uniqueId ?? o.id ?? ''}`}`
-      )
-      found.forEach(p => { if (!products.some(x => x.id === p.id)) products.push(p) })
-    })
-
+  private async _searchAPI(query: string, storeId: string): Promise<Product[]> {
     try {
-      await page.context().addCookies([
-        { name: 'pinCode', value: location.pincode, domain: '.dmart.in', path: '/' },
-        { name: 'userPincode', value: location.pincode, domain: '.dmart.in', path: '/' },
-      ])
-
-      // Load homepage to pick up storeId cookies, then search
-      await page.goto('https://www.dmart.in/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
-      await page.waitForTimeout(2000)
-
-      await page.goto(
-        `https://www.dmart.in/search?q=${encodeURIComponent(query)}`,
-        { waitUntil: 'domcontentloaded', timeout: 20000 }
-      ).catch(() => {})
-
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(12000),
-      ])
-
-      if (products.length > 0) return products
-
-      return await this.extractByPriceDOM(page, 'dmart', `https://www.dmart.in/search?q=${encodeURIComponent(query)}`)
-    } finally {
-      unsubscribe()
+      const url = `${DIGITAL_BASE}/v3/search/${encodeURIComponent(query)}?page=1&buryOOS=true&size=20&storeId=${storeId}`
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+          'Referer': `https://www.dmart.in/search?searchTerm=${encodeURIComponent(query)}`,
+          'Origin': 'https://www.dmart.in',
+        },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!res.ok) return []
+      const json = await res.json() as { products?: DmartProduct[] }
+      const products = json.products ?? []
+      return products.slice(0, 20).flatMap(p => this._mapProduct(p)).filter(Boolean) as Product[]
+    } catch {
+      return []
     }
   }
 
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 12000)
-    })
+  private _mapProduct(p: DmartProduct): Product[] {
+    if (!p.sKUs?.length) return []
+
+    // Prefer first available (non-OOS) SKU, fall back to first
+    const sku = p.sKUs.find(s => s.invType !== 'OOS') ?? p.sKUs[0]
+    const price = parseFloat(sku.priceSALE ?? '0') || 0
+    if (price <= 0) return []
+
+    const mrp = parseFloat(sku.priceMRP ?? '0') || 0
+    const imageUrl = sku.productImageKey && sku.imgCode
+      ? `${CDN_BASE}/${sku.productImageKey}_${sku.imgCode}_P.jpg`
+      : undefined
+
+    return [{
+      id: `dmart-${p.productId ?? sku.skuUniqueID}`,
+      name: sku.name ?? p.name ?? '',
+      brand: p.manufacturer ?? undefined,
+      price,
+      originalPrice: mrp > price ? mrp : undefined,
+      discountPercent: sku.savingPercentage && sku.savingPercentage > 0 ? sku.savingPercentage : undefined,
+      quantity: sku.variantTextValue ?? '',
+      imageUrl,
+      productUrl: `https://www.dmart.in/pdp/${p.productId}`,
+      platform: 'dmart',
+      inStock: sku.invType !== 'OOS' && sku.buyable === 'true',
+    }]
   }
+}
+
+interface DmartSku {
+  name?: string
+  skuUniqueID?: string
+  priceSALE?: string
+  priceMRP?: string
+  savePrice?: string
+  savingPercentage?: number
+  variantTextValue?: string
+  productImageKey?: string
+  imgCode?: string
+  invType?: string
+  buyable?: string
+}
+
+interface DmartProduct {
+  productId?: string
+  name?: string
+  manufacturer?: string
+  sKUs?: DmartSku[]
 }

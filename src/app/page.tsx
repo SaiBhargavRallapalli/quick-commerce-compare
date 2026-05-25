@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
+import Script from 'next/script'
 import Header from '@/components/Header'
 import SearchBar from '@/components/SearchBar'
 import PlatformSection from '@/components/PlatformSection'
@@ -8,6 +9,20 @@ import BestDealBanner from '@/components/BestDealBanner'
 import type { PlatformResult, PlatformId, Product } from '@/lib/types'
 import { PLATFORMS } from '@/lib/platforms'
 import { Zap, TrendingDown, RefreshCw } from 'lucide-react'
+
+const JSON_LD = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: 'QuickPrice',
+  description: 'Real-time grocery price comparison across all major quick commerce platforms in India.',
+  applicationCategory: 'ShoppingApplication',
+  operatingSystem: 'Web',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'INR',
+  },
+}
 
 type ResultMap = Record<string, PlatformResult>
 
@@ -145,6 +160,11 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col">
+      <Script
+        id="json-ld"
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+      />
       <Header />
 
       <main className="flex-1">
@@ -155,14 +175,14 @@ export default function HomePage() {
               <div className="text-center mb-10 animate-fade-in">
                 <div className="inline-flex items-center gap-2 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm font-medium px-4 py-2 rounded-full mb-6">
                   <Zap className="w-4 h-4" />
-                  Real-time prices across 7 platforms
+                  Real-time prices across 9 platforms
                 </div>
                 <h1 className="text-4xl sm:text-5xl font-black text-gray-900 dark:text-white leading-tight mb-4">
                   Stop switching apps.<br />
                   <span className="text-green-600">Compare instantly.</span>
                 </h1>
                 <p className="text-lg text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-                  Search once, compare prices on Blinkit, Zepto, Swiggy Instamart, BigBasket, JioMart, DMart Ready &amp; First Club simultaneously.
+                  Search once, compare prices on Blinkit, Zepto, Swiggy Instamart, BigBasket, JioMart, DMart, Flipkart &amp; Amazon Fresh simultaneously.
                 </p>
               </div>
             )}
@@ -282,7 +302,7 @@ export default function HomePage() {
           Always verify on the respective platform before purchasing.
         </p>
         <p className="mt-1">
-          Supports: Blinkit · Zepto · Swiggy Instamart · BigBasket · JioMart · DMart Ready · First Club
+          Supports: Blinkit · Zepto · Swiggy Instamart · BigBasket · JioMart · DMart Ready · First Club · Flipkart Grocery · Amazon Fresh
         </p>
       </footer>
     </div>
