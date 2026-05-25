@@ -33,7 +33,7 @@ export class DmartScraper extends BaseScraper {
             'Accept': 'application/json',
             'Referer': 'https://www.dmart.in/',
           },
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(10000),
         }
       )
       if (!res.ok) return DEFAULT_STORE_ID
@@ -57,7 +57,7 @@ export class DmartScraper extends BaseScraper {
           'Referer': `https://www.dmart.in/search?searchTerm=${encodeURIComponent(query)}`,
           'Origin': 'https://www.dmart.in',
         },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(12000),
       })
       if (!res.ok) return []
       const json = await res.json() as { products?: DmartProduct[] }

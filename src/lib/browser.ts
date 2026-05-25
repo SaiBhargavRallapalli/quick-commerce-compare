@@ -1,3 +1,10 @@
+// Must be set before playwright resolves the browser executable path.
+// PLAYWRIGHT_BROWSERS_PATH=0 → browser installed alongside playwright package in
+// node_modules/playwright-core/.local-browsers/ which is bundled into the Lambda.
+// Without this, the build container installs to ~/.cache/ms-playwright/ (a different
+// home directory than the Lambda sandbox /home/sbx_user1051/).
+process.env.PLAYWRIGHT_BROWSERS_PATH = '0'
+
 import { chromium, Browser, BrowserContext } from 'playwright'
 
 let browser: Browser | null = null
@@ -11,6 +18,7 @@ const LAUNCH_ARGS = [
   '--disable-gpu',
   '--no-first-run',
   '--no-zygote',
+  '--single-process', // Required for Lambda — no /dev/shm
   '--disable-blink-features=AutomationControlled',
   '--disable-infobars',
   '--window-size=1280,800',

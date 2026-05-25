@@ -27,8 +27,9 @@ const SCRAPERS = [
   new AmazonNowScraper(),
 ]
 
-// Max 3 concurrent Playwright pages to avoid OOM
-const limit = pLimit(3)
+// Max 3 concurrent Playwright pages to avoid OOM; HTTP-only scrapers bypass this
+const browserLimit = pLimit(3)
+const noLimit = pLimit(Infinity)
 
 type Tagged = { result: PlatformResult; idx: number }
 
@@ -39,7 +40,10 @@ function makeTask(
   location: Location,
   getContext: () => Promise<BrowserContext>
 ): Promise<Tagged> {
-  return limit(async (): Promise<Tagged> => {
+  // HTTP-only scrapers run immediately with no concurrency cap
+  const queue = scraper.isHttpOnly ? noLimit : browserLimit
+
+  return queue(async (): Promise<Tagged> => {
     const startMs = Date.now()
     const platform = scraper.platformId as PlatformId
 
@@ -49,7 +53,6 @@ function makeTask(
     }
 
     try {
-      // HTTP-only scrapers skip browser entirely
       const context = scraper.isHttpOnly
         ? ({} as BrowserContext)
         : await getContext()
@@ -85,8 +88,8 @@ function makeTask(
 
 /**
  * Run all scrapers in parallel and yield results as each one finishes.
- * HTTP-only scrapers start immediately; browser scrapers share one context
- * that is lazily initialized (so HTTP results arrive first).
+ * HTTP-only scrapers start immediately without waiting for the browser.
+ * Playwright scrapers share one lazily-initialized browser context.
  */
 export async function* searchAllPlatforms(
   query: string,
@@ -106,8 +109,7 @@ export async function* searchAllPlatforms(
     return browserPromise
   }
 
-  // Kick off browser creation in the background so it's warm by the time
-  // Playwright scrapers need it — HTTP scrapers don't wait for it at all
+  // Start browser warmup in background — HTTP scrapers don't wait for it
   getContext().catch(() => {})
 
   const tasks = SCRAPERS.map((scraper, idx) =>
