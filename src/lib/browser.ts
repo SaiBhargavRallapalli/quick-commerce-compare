@@ -11,9 +11,9 @@ export function isServerlessEnv(): boolean {
   )
 }
 
-/** Keep low on serverless — concurrent tabs OOM/crash Chromium at 1024MB. */
+/** One browser tab at a time in serverless — concurrent tabs OOM at 1024MB. */
 export function getBrowserConcurrency(): number {
-  return isServerlessEnv() ? 2 : 5
+  return isServerlessEnv() ? 1 : 5
 }
 
 function isClosedBrowserError(err: unknown): boolean {
