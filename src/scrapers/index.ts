@@ -2,7 +2,7 @@ import pLimit from 'p-limit'
 import type { PlatformResult, PlatformId } from '@/lib/types'
 import type { Location } from '@/lib/types'
 import type { BrowserContext } from 'playwright'
-import { createContext } from '@/lib/browser'
+import { getBrowser, getBrowserConcurrency, withBrowserContext } from '@/lib/browser'
 import { getCachedProducts, setCachedProducts } from '@/lib/cache'
 import { SCRAPE_TIMEOUT } from './base'
 import { BlinkitScraper } from './blinkit'
@@ -27,8 +27,8 @@ const SCRAPERS = [
   new AmazonNowScraper(),
 ]
 
-// Max 5 concurrent Playwright pages (balance speed vs memory)
-const browserLimit = pLimit(5)
+// Serverless: 2 concurrent pages max (1024MB). Local dev: up to 5.
+const browserLimit = pLimit(getBrowserConcurrency())
 const noLimit = pLimit(Infinity)
 
 type Tagged = { result: PlatformResult; idx: number }
@@ -37,8 +37,7 @@ function makeTask(
   scraper: (typeof SCRAPERS)[number],
   idx: number,
   query: string,
-  location: Location,
-  getContext: () => Promise<BrowserContext>
+  location: Location
 ): Promise<Tagged> {
   // HTTP-only scrapers run immediately with no concurrency cap
   const queue = scraper.isHttpOnly ? noLimit : browserLimit
@@ -53,16 +52,17 @@ function makeTask(
     }
 
     try {
-      const context = scraper.isHttpOnly
-        ? ({} as BrowserContext)
-        : await getContext()
+      const scrapeWithTimeout = (context: BrowserContext) =>
+        Promise.race([
+          scraper.scrape(query, location, context),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Timeout')), SCRAPE_TIMEOUT)
+          ),
+        ])
 
-      const products = await Promise.race([
-        scraper.scrape(query, location, context),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), SCRAPE_TIMEOUT)
-        ),
-      ])
+      const products = scraper.isHttpOnly
+        ? await scrapeWithTimeout({} as BrowserContext)
+        : await withBrowserContext(location.lat, location.lon, scrapeWithTimeout)
 
       setCachedProducts(platform, query, location.pincode, products)
 
@@ -88,45 +88,25 @@ function makeTask(
 
 /**
  * Run all scrapers in parallel and yield results as each one finishes.
- * HTTP-only scrapers start immediately without waiting for the browser.
- * Playwright scrapers share one lazily-initialized browser context.
+ * HTTP-only scrapers start immediately. Each Playwright scraper gets its own
+ * isolated browser context to avoid cross-site interference and OOM crashes.
  */
 export async function* searchAllPlatforms(
   query: string,
   location: Location
 ): AsyncGenerator<PlatformResult> {
-  let browserContext: BrowserContext | undefined
-  let browserPromise: Promise<BrowserContext> | undefined
-
-  const getContext = (): Promise<BrowserContext> => {
-    if (browserContext !== undefined) return Promise.resolve(browserContext)
-    if (browserPromise === undefined) {
-      browserPromise = createContext(location.lat, location.lon).then(ctx => {
-        browserContext = ctx
-        return ctx
-      })
-    }
-    return browserPromise
-  }
-
-  // Start browser warmup in background — HTTP scrapers don't wait for it
-  getContext().catch(() => {})
+  // Warm Chromium in the background while HTTP scrapers start immediately
+  getBrowser().catch(() => {})
 
   const tasks = SCRAPERS.map((scraper, idx) =>
-    makeTask(scraper, idx, query, location, getContext)
+    makeTask(scraper, idx, query, location)
   )
 
-  try {
-    const pending = new Map(tasks.map((t, i) => [i, t]))
+  const pending = new Map(tasks.map((t, i) => [i, t]))
 
-    while (pending.size > 0) {
-      const { result, idx } = await Promise.race(pending.values())
-      pending.delete(idx)
-      yield result
-    }
-  } finally {
-    if (browserContext !== undefined) {
-      await browserContext.close().catch(() => {})
-    }
+  while (pending.size > 0) {
+    const { result, idx } = await Promise.race(pending.values())
+    pending.delete(idx)
+    yield result
   }
 }

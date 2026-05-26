@@ -3,6 +3,24 @@ import { chromium, Browser, BrowserContext } from 'playwright'
 let browser: Browser | null = null
 let launchPromise: Promise<Browser> | null = null
 
+export function isServerlessEnv(): boolean {
+  return !!(
+    process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.AWS_EXECUTION_ENV
+  )
+}
+
+/** Keep low on serverless — concurrent tabs OOM/crash Chromium at 1024MB. */
+export function getBrowserConcurrency(): number {
+  return isServerlessEnv() ? 2 : 5
+}
+
+function isClosedBrowserError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /closed|disconnected|crashed|target.*browser/i.test(msg)
+}
+
 const DEV_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
@@ -18,13 +36,7 @@ const DEV_ARGS = [
 ]
 
 async function getLaunchOptions(): Promise<Parameters<typeof chromium.launch>[0]> {
-  const isServerless = !!(
-    process.env.VERCEL ||
-    process.env.AWS_LAMBDA_FUNCTION_NAME ||
-    process.env.AWS_EXECUTION_ENV
-  )
-
-  if (isServerless) {
+  if (isServerlessEnv()) {
     const chromiumBinary = (await import('@sparticuz/chromium')).default
     return {
       executablePath: await chromiumBinary.executablePath(),
@@ -38,6 +50,14 @@ async function getLaunchOptions(): Promise<Parameters<typeof chromium.launch>[0]
   return { headless: true, args: DEV_ARGS }
 }
 
+export async function resetBrowser(): Promise<void> {
+  if (browser) {
+    await browser.close().catch(() => {})
+    browser = null
+  }
+  launchPromise = null
+}
+
 export async function getBrowser(): Promise<Browser> {
   if (browser?.isConnected()) return browser
   if (launchPromise) return launchPromise
@@ -47,8 +67,15 @@ export async function getBrowser(): Promise<Browser> {
     .then(b => {
       browser = b
       launchPromise = null
-      b.on('disconnected', () => { browser = null })
+      b.on('disconnected', () => {
+        browser = null
+        launchPromise = null
+      })
       return b
+    })
+    .catch(err => {
+      launchPromise = null
+      throw err
     })
 
   return launchPromise
@@ -91,9 +118,37 @@ export async function createContext(lat: number, lon: number): Promise<BrowserCo
   return ctx
 }
 
-export async function closeBrowser(): Promise<void> {
-  if (browser) {
-    await browser.close()
-    browser = null
+/**
+ * Run a scrape in an isolated browser context. Retries once if Chromium
+ * crashes or the context is closed mid-flight (common under serverless memory limits).
+ */
+export async function withBrowserContext<T>(
+  lat: number,
+  lon: number,
+  fn: (ctx: BrowserContext) => Promise<T>
+): Promise<T> {
+  let lastErr: unknown
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctx = await createContext(lat, lon)
+    try {
+      const result = await fn(ctx)
+      await ctx.close().catch(() => {})
+      return result
+    } catch (err) {
+      await ctx.close().catch(() => {})
+      lastErr = err
+      if (attempt === 0 && isClosedBrowserError(err)) {
+        await resetBrowser()
+        continue
+      }
+      throw err
+    }
   }
+
+  throw lastErr
+}
+
+export async function closeBrowser(): Promise<void> {
+  await resetBrowser()
 }
