@@ -47,7 +47,7 @@ export class BlinkitScraper extends BaseScraper {
       await this.injectLocation(page, BLINKIT_LS(location), BLINKIT_COOKIES(location))
 
       const searchUrl = `https://blinkit.com/s/?q=${encodeURIComponent(query)}`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
       await this._handleLocationPicker(page, location)
 
       await this.waitForMinProducts(products)

@@ -34,7 +34,7 @@ export class AmazonNowScraper extends BaseScraper {
       ])
 
       const searchUrl = `https://www.amazon.in/s?k=${encodeURIComponent(query)}&i=now&ref=nb_sb_noss`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
 
       await this.waitForMinProducts(products)
 

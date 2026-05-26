@@ -29,7 +29,7 @@ export class FirstClubScraper extends BaseScraper {
 
     try {
       const searchUrl = `https://www.firstclub.io/search?type=product&q=${encodeURIComponent(query)}`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
 
       const inlineProducts = await this._extractShopifyJson(page)
       inlineProducts.forEach(p => { if (!products.some(x => x.id === p.id)) products.push(p) })

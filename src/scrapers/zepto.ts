@@ -46,7 +46,7 @@ export class ZeptoScraper extends BaseScraper {
       await this.injectLocation(page, ZEPTO_LS(location), ZEPTO_COOKIES(location))
 
       const searchUrl = `https://www.zepto.com/search?query=${encodeURIComponent(query)}`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
       await this._handleCityModal(page, location)
 
       await this.waitForMinProducts(products)

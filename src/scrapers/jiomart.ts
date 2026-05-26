@@ -33,7 +33,7 @@ export class JioMartScraper extends BaseScraper {
       ])
 
       const searchUrl = `https://www.jiomart.com/search?q=${encodeURIComponent(query)}`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
 
       await this.waitForMinProducts(products)
 

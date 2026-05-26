@@ -19,14 +19,8 @@ export class SwiggyScraper extends BaseScraper {
 
   private async _scrape(page: Page, query: string, location: Location): Promise<Product[]> {
     const products: Product[] = []
-    let capturedStoreId: string | null = null
 
-    const unsubscribe = this.onAnyJson(page, (json, url) => {
-      if (!capturedStoreId && url.includes('storeId=')) {
-        const m = url.match(/storeId=(\d+)/)
-        if (m) capturedStoreId = m[1]
-      }
-
+    const unsubscribe = this.onAnyJson(page, (json) => {
       const found = extractProductsFromJson(json, 'swiggy', (o) =>
         `https://www.swiggy.com/instamart/item/${o.product_id ?? o.item_id ?? o.id ?? ''}`
       )
@@ -34,40 +28,17 @@ export class SwiggyScraper extends BaseScraper {
     })
 
     try {
-      await page.context().addCookies([
-        { name: 'lat', value: String(location.lat), domain: '.swiggy.com', path: '/' },
-        { name: 'lng', value: String(location.lon), domain: '.swiggy.com', path: '/' },
-      ])
+      await this.injectLocation(
+        page,
+        { lat: String(location.lat), lng: String(location.lon) },
+        [
+          { name: 'lat', value: String(location.lat), domain: '.swiggy.com' },
+          { name: 'lng', value: String(location.lon), domain: '.swiggy.com' },
+        ]
+      )
 
-      const storeIdPromise = page.waitForResponse(
-        res => res.ok() && res.url().includes('/instamart/home'),
-        { timeout: 8000 }
-      ).then(res => {
-        const m = res.url().match(/storeId=(\d+)/)
-        return m?.[1] ?? null
-      }).catch(() => null)
-
-      await page.goto('https://www.swiggy.com/instamart', {
-        waitUntil: 'domcontentloaded',
-        timeout: 15000,
-      }).catch(() => {})
-
-      const sid = (await storeIdPromise) ?? capturedStoreId ?? DEFAULT_STORE_ID
-
-      if (sid !== DEFAULT_STORE_ID) {
-        await page.evaluate((storeId) => {
-          try {
-            localStorage.setItem('storeId', storeId)
-            localStorage.setItem('primaryStoreId', storeId)
-          } catch { /* ignore */ }
-        }, sid)
-      }
-
-      const inBrowserProducts = await this._inBrowserSearch(page, query, sid)
-      if (inBrowserProducts.length > 0) return inBrowserProducts
-
-      const searchUrl = `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(query)}&storeId=${sid}`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      const searchUrl = `https://www.swiggy.com/instamart/search?query=${encodeURIComponent(query)}&storeId=${DEFAULT_STORE_ID}`
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
 
       await this.waitForMinProducts(products)
 
@@ -76,31 +47,6 @@ export class SwiggyScraper extends BaseScraper {
       return await this.extractByPriceDOM(page, 'swiggy', searchUrl)
     } finally {
       unsubscribe()
-    }
-  }
-
-  private async _inBrowserSearch(page: Page, query: string, storeId: string): Promise<Product[]> {
-    try {
-      const json = await page.evaluate(async ({ q, sid }: { q: string; sid: string }) => {
-        const url = `/api/instamart/search/v2?offset=0&query=${encodeURIComponent(q)}&storeId=${sid}&primaryStoreId=${sid}&ageConsent=false`
-        try {
-          const res = await fetch(url, {
-            headers: { Accept: 'application/json', 'x-device-id': 'web' },
-            credentials: 'include',
-          })
-          if (!res.ok) return null
-          return await res.json()
-        } catch {
-          return null
-        }
-      }, { q: query, sid: storeId }) as unknown
-
-      if (!json) return []
-      return extractProductsFromJson(json, 'swiggy', (o) =>
-        `https://www.swiggy.com/instamart/item/${o.product_id ?? o.item_id ?? o.id ?? ''}`
-      )
-    } catch {
-      return []
     }
   }
 }

@@ -30,7 +30,7 @@ export class FlipkartMinutesScraper extends BaseScraper {
 
     try {
       const searchUrl = `https://www.flipkart.com/search?q=${encodeURIComponent(query)}&otracker=search&marketplace=GROCERY`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {})
 
       await this.waitForMinProducts(products)
 

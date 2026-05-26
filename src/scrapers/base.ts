@@ -4,7 +4,7 @@ import type { Location } from '@/lib/types'
 
 export const SCRAPE_TIMEOUT = 25_000
 /** Max time to wait after navigation for JSON/DOM products */
-export const PRODUCT_WAIT_MS = 6_000
+export const PRODUCT_WAIT_MS = 3_000
 
 export abstract class BaseScraper {
   abstract readonly platformId: PlatformId
