@@ -9,7 +9,6 @@ export class BigBasketScraper extends BaseScraper {
   async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
     const page = await context.newPage()
     try {
-      await this.blockHeavyResources(page)
       return await this._scrape(page, query, location)
     } finally {
       await page.close()
@@ -27,40 +26,32 @@ export class BigBasketScraper extends BaseScraper {
     })
 
     try {
-      // Set location cookies before navigation
       await page.context().addCookies([
         { name: 'bb_city', value: location.city ?? 'Bengaluru', domain: '.bigbasket.com', path: '/' },
         { name: 'bb_pin', value: location.pincode, domain: '.bigbasket.com', path: '/' },
         { name: 'x_channel', value: 'BB-WEB', domain: '.bigbasket.com', path: '/' },
       ])
 
-      // Step 1: Load BigBasket homepage to establish a real session
-      // This sets additional cookies including the lat-long cookie required by their API
+      // Minimal session bootstrap (commit is faster than full DOM)
       await page.goto('https://www.bigbasket.com/', {
-        waitUntil: 'domcontentloaded', timeout: 20000
+        waitUntil: 'commit',
+        timeout: 12000,
       }).catch(() => {})
-      await page.waitForTimeout(2000)
 
-      // Step 2: Try API call with cookies captured from the browser session
       const bbCookies = await page.context().cookies(['https://www.bigbasket.com'])
       const cookieStr = bbCookies.map(c => `${c.name}=${c.value}`).join('; ')
       const apiProducts = await this._listingAPI(query, cookieStr)
       if (apiProducts.length > 0) return apiProducts
 
-      // Step 3: Navigate to search page (may be blocked but worth trying)
       await page.goto(
         `https://www.bigbasket.com/ps/?q=${encodeURIComponent(query)}`,
-        { waitUntil: 'domcontentloaded', timeout: 20000 }
+        { waitUntil: 'domcontentloaded', timeout: 15000 }
       ).catch(() => {})
 
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(10000),
-      ])
+      await this.waitForMinProducts(products)
 
       if (products.length > 0) return products
 
-      // Step 4: Try __NEXT_DATA__ (in case they've moved to Next.js)
       const nextDataProducts = await this._extractNextData(page)
       if (nextDataProducts.length > 0) return nextDataProducts
 
@@ -109,14 +100,5 @@ export class BigBasketScraper extends BaseScraper {
     } catch {
       return []
     }
-  }
-
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 12000)
-    })
   }
 }

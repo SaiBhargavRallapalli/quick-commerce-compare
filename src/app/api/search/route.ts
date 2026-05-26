@@ -3,6 +3,7 @@ import { searchAllPlatforms } from '@/scrapers/index'
 import { resolveLocation } from '@/lib/pincode'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // seconds
 
 export async function GET(req: NextRequest) {

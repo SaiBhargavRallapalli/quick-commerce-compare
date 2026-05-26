@@ -3,13 +3,28 @@ import type { Product } from '@/lib/types'
 import type { Location } from '@/lib/types'
 import { BaseScraper, extractProductsFromJson } from './base'
 
+const ZEPTO_LS = (location: Location) => ({
+  userLatitude: String(location.lat),
+  userLongitude: String(location.lon),
+  latitude: String(location.lat),
+  longitude: String(location.lon),
+  pincode: location.pincode,
+  userPincode: location.pincode,
+  'zepto-location': JSON.stringify({ lat: location.lat, lng: location.lon, pinCode: location.pincode }),
+})
+
+const ZEPTO_COOKIES = (location: Location) => [
+  { name: 'userLatitude', value: String(location.lat), domain: '.zepto.com' },
+  { name: 'userLongitude', value: String(location.lon), domain: '.zepto.com' },
+  { name: 'pincode', value: location.pincode, domain: '.zepto.com' },
+]
+
 export class ZeptoScraper extends BaseScraper {
   readonly platformId = 'zepto' as const
 
   async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
     const page = await context.newPage()
     try {
-      await this.blockHeavyResources(page)
       return await this._scrape(page, query, location)
     } finally {
       await page.close()
@@ -28,43 +43,17 @@ export class ZeptoScraper extends BaseScraper {
     })
 
     try {
-      await this.setLocationViaHomepage(
-        page,
-        'https://www.zepto.com/',
-        location,
-        {
-          userLatitude: String(location.lat),
-          userLongitude: String(location.lon),
-          latitude: String(location.lat),
-          longitude: String(location.lon),
-          pincode: location.pincode,
-          userPincode: location.pincode,
-          'zepto-location': JSON.stringify({ lat: location.lat, lng: location.lon, pinCode: location.pincode }),
-        },
-        [
-          { name: 'userLatitude', value: String(location.lat), domain: '.zepto.com' },
-          { name: 'userLongitude', value: String(location.lon), domain: '.zepto.com' },
-          { name: 'pincode', value: location.pincode, domain: '.zepto.com' },
-        ]
-      )
+      await this.injectLocation(page, ZEPTO_LS(location), ZEPTO_COOKIES(location))
 
-      // Handle city selection modal if present
+      const searchUrl = `https://www.zepto.com/search?query=${encodeURIComponent(query)}`
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
       await this._handleCityModal(page, location)
 
-      // Navigate to search
-      await page.goto(
-        `https://www.zepto.com/search?query=${encodeURIComponent(query)}`,
-        { waitUntil: 'domcontentloaded', timeout: 20000 }
-      )
-
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(12000),
-      ])
+      await this.waitForMinProducts(products)
 
       if (products.length > 0) return products
 
-      return await this.extractByPriceDOM(page, 'zepto', `https://www.zepto.com/search?query=${encodeURIComponent(query)}`)
+      return await this.extractByPriceDOM(page, 'zepto', searchUrl)
     } finally {
       unsubscribe()
     }
@@ -72,32 +61,22 @@ export class ZeptoScraper extends BaseScraper {
 
   private async _handleCityModal(page: Page, location: Location): Promise<void> {
     try {
-      // Zepto shows a city picker on first load
       const pincodeInput = page.locator(
         'input[placeholder*="pincode" i], input[placeholder*="Pincode" i], input[placeholder*="city" i], input[placeholder*="area" i]'
       ).first()
 
-      if (await pincodeInput.isVisible({ timeout: 3000 })) {
+      if (await pincodeInput.isVisible({ timeout: 1500 })) {
         await pincodeInput.fill(location.pincode)
-        await page.waitForTimeout(1000)
+        await page.waitForTimeout(600)
 
         const suggestion = page.locator('[class*="suggestion" i], [class*="listItem" i], [class*="DropdownItem" i], ul > li').first()
-        if (await suggestion.isVisible({ timeout: 2000 })) {
+        if (await suggestion.isVisible({ timeout: 1500 })) {
           await suggestion.click()
         } else {
           await pincodeInput.press('Enter')
         }
-        await page.waitForTimeout(1500)
+        await page.waitForTimeout(800)
       }
     } catch { /* no modal */ }
-  }
-
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 15000)
-    })
   }
 }

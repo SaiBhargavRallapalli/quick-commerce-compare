@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useMemo } from 'react'
 import Script from 'next/script'
 import Header from '@/components/Header'
 import SearchBar from '@/components/SearchBar'
@@ -122,41 +122,50 @@ export default function HomePage() {
     }
   }, [])
 
-  // Compute best price across all platforms
-  const allProducts = Object.values(results)
-    .flatMap(r => r.products)
-    .filter(p => p.inStock && p.price > 0)
-    .sort((a, b) => a.price - b.price)
-
-  const bestProduct: Product | null = allProducts[0] ?? null
-  const maxPrice = allProducts.length > 0 ? Math.max(...allProducts.map(p => p.price)) : 0
-
-  // Price per platform for comparison bar
-  const platformBestPrices = Object.entries(results)
-    .filter(([, r]) => r.status === 'success' && r.products.length > 0)
-    .map(([id, r]) => ({
-      platform: id,
-      price: Math.min(...r.products.filter(p => p.inStock && p.price > 0).map(p => p.price).filter(Boolean))
-    }))
-    .filter(p => isFinite(p.price))
-
-  const hasResults = Object.values(results).some(r => r.status === 'success' && r.products.length > 0)
-  const hasStarted = Object.values(results).some(r => r.status !== 'idle')
+  const hasResults = useMemo(
+    () => Object.values(results).some(r => r.status === 'success' && r.products.length > 0),
+    [results]
+  )
+  const hasStarted = useMemo(
+    () => Object.values(results).some(r => r.status !== 'idle'),
+    [results]
+  )
   const totalPlatforms = PLATFORMS.length
 
-  // Sort platforms: success first (by best price), then loading, then error/empty
-  const sortedPlatforms = [...PLATFORMS].sort((a, b) => {
-    const ra = results[a.id]
-    const rb = results[b.id]
-    if (ra.status === 'success' && rb.status !== 'success') return -1
-    if (rb.status === 'success' && ra.status !== 'success') return 1
-    if (ra.status === 'loading' && rb.status !== 'loading') return -1
-    if (rb.status === 'loading' && ra.status !== 'loading') return 1
-    // Both success — sort by best price
-    const priceA = Math.min(...(ra.products.filter(p => p.inStock && p.price > 0).map(p => p.price)), Infinity)
-    const priceB = Math.min(...(rb.products.filter(p => p.inStock && p.price > 0).map(p => p.price)), Infinity)
-    return priceA - priceB
-  })
+  const { bestProduct, maxPrice, platformBestPrices } = useMemo(() => {
+    const allProducts = Object.values(results)
+      .flatMap(r => r.products)
+      .filter(p => p.inStock && p.price > 0)
+      .sort((a, b) => a.price - b.price)
+
+    const platformBestPrices = Object.entries(results)
+      .filter(([, r]) => r.status === 'success' && r.products.length > 0)
+      .map(([id, r]) => ({
+        platform: id,
+        price: Math.min(...r.products.filter(p => p.inStock && p.price > 0).map(p => p.price).filter(Boolean)),
+      }))
+      .filter(p => isFinite(p.price))
+
+    return {
+      bestProduct: (allProducts[0] ?? null) as Product | null,
+      maxPrice: allProducts.length > 0 ? Math.max(...allProducts.map(p => p.price)) : 0,
+      platformBestPrices,
+    }
+  }, [results])
+
+  const sortedPlatforms = useMemo(() => {
+    return [...PLATFORMS].sort((a, b) => {
+      const ra = results[a.id]
+      const rb = results[b.id]
+      if (ra.status === 'success' && rb.status !== 'success') return -1
+      if (rb.status === 'success' && ra.status !== 'success') return 1
+      if (ra.status === 'loading' && rb.status !== 'loading') return -1
+      if (rb.status === 'loading' && ra.status !== 'loading') return 1
+      const priceA = Math.min(...(ra.products.filter(p => p.inStock && p.price > 0).map(p => p.price)), Infinity)
+      const priceB = Math.min(...(rb.products.filter(p => p.inStock && p.price > 0).map(p => p.price)), Infinity)
+      return priceA - priceB
+    })
+  }, [results])
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col">

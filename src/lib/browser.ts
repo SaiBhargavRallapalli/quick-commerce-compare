@@ -78,6 +78,16 @@ export async function createContext(lat: number, lon: number): Promise<BrowserCo
     window.chrome = { runtime: {} }
   })
 
+  // Block images/CSS/fonts for every page in this context (faster scrapes)
+  await ctx.route('**/*', route => {
+    const rt = route.request().resourceType()
+    if (['image', 'stylesheet', 'font', 'media', 'websocket', 'eventsource'].includes(rt)) {
+      route.abort()
+    } else {
+      route.continue()
+    }
+  })
+
   return ctx
 }
 

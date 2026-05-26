@@ -9,7 +9,6 @@ export class FlipkartMinutesScraper extends BaseScraper {
   async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
     const page = await context.newPage()
     try {
-      await this.blockHeavyResources(page)
       return await this._scrape(page, query, location)
     } finally {
       await page.close()
@@ -31,13 +30,9 @@ export class FlipkartMinutesScraper extends BaseScraper {
 
     try {
       const searchUrl = `https://www.flipkart.com/search?q=${encodeURIComponent(query)}&otracker=search&marketplace=GROCERY`
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {})
-      await page.waitForTimeout(4000)
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
 
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(8000),
-      ])
+      await this.waitForMinProducts(products)
 
       if (products.length > 0) return products
 
@@ -97,14 +92,5 @@ export class FlipkartMinutesScraper extends BaseScraper {
     } catch {
       return []
     }
-  }
-
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 12000)
-    })
   }
 }

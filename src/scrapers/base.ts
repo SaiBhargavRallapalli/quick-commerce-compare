@@ -2,7 +2,9 @@ import type { BrowserContext, Page, Route } from 'playwright'
 import type { Product, PlatformId } from '@/lib/types'
 import type { Location } from '@/lib/types'
 
-export const SCRAPE_TIMEOUT = 30_000
+export const SCRAPE_TIMEOUT = 25_000
+/** Max time to wait after navigation for JSON/DOM products */
+export const PRODUCT_WAIT_MS = 6_000
 
 export abstract class BaseScraper {
   abstract readonly platformId: PlatformId
@@ -37,12 +39,41 @@ export abstract class BaseScraper {
   protected async blockHeavyResources(page: Page): Promise<void> {
     await page.route('**/*', (route: Route) => {
       const rt = route.request().resourceType()
-      if (['stylesheet', 'font', 'media', 'websocket', 'eventsource'].includes(rt)) {
+      if (['image', 'stylesheet', 'font', 'media', 'websocket', 'eventsource'].includes(rt)) {
         route.abort()
       } else {
         route.continue()
       }
     })
+  }
+
+  /** Resolve once `min` products are collected or `maxMs` elapses (polls every 150ms). */
+  protected waitForMinProducts(products: Product[], min = 3, maxMs = PRODUCT_WAIT_MS): Promise<void> {
+    return new Promise(resolve => {
+      const deadline = Date.now() + maxMs
+      const iv = setInterval(() => {
+        if (products.length >= min || Date.now() >= deadline) {
+          clearInterval(iv)
+          resolve()
+        }
+      }, 150)
+    })
+  }
+
+  /** Set cookies + localStorage without loading the homepage. */
+  protected async injectLocation(
+    page: Page,
+    localStorageKeys: Record<string, string>,
+    cookieOverrides: Array<{ name: string; value: string; domain: string }>
+  ): Promise<void> {
+    await page.context().addCookies(
+      cookieOverrides.map(c => ({ ...c, path: '/' }))
+    )
+    await page.addInitScript((keys: Record<string, string>) => {
+      for (const [k, v] of Object.entries(keys)) {
+        try { localStorage.setItem(k, v) } catch { /* ignore */ }
+      }
+    }, localStorageKeys)
   }
 
   /**

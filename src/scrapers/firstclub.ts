@@ -9,7 +9,6 @@ export class FirstClubScraper extends BaseScraper {
   async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
     const page = await context.newPage()
     try {
-      await this.blockHeavyResources(page)
       return await this._scrape(page, query, location)
     } finally {
       await page.close()
@@ -29,31 +28,17 @@ export class FirstClubScraper extends BaseScraper {
     })
 
     try {
-      // Shopify stores use /search?type=product&q=... for filtered product search
-      const searchUrls = [
-        `https://www.firstclub.io/search?type=product&q=${encodeURIComponent(query)}`,
-        `https://www.firstclub.io/search?q=${encodeURIComponent(query)}`,
-      ]
+      const searchUrl = `https://www.firstclub.io/search?type=product&q=${encodeURIComponent(query)}`
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
 
-      for (const url of searchUrls) {
-        if (products.length >= 3) break
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
-        await page.waitForTimeout(2500)
+      const inlineProducts = await this._extractShopifyJson(page)
+      inlineProducts.forEach(p => { if (!products.some(x => x.id === p.id)) products.push(p) })
 
-        // Shopify renders search results inline — try Liquid-rendered JSON script
-        const inlineProducts = await this._extractShopifyJson(page)
-        inlineProducts.forEach(p => { if (!products.some(x => x.id === p.id)) products.push(p) })
-        if (products.length >= 3) break
-      }
-
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(6000),
-      ])
+      await this.waitForMinProducts(products)
 
       if (products.length > 0) return products
 
-      return await this.extractByPriceDOM(page, 'firstclub', `https://www.firstclub.io/search?type=product&q=${encodeURIComponent(query)}`)
+      return await this.extractByPriceDOM(page, 'firstclub', searchUrl)
     } finally {
       unsubscribe()
     }
@@ -61,7 +46,6 @@ export class FirstClubScraper extends BaseScraper {
 
   private async _extractShopifyJson(page: Page): Promise<Product[]> {
     try {
-      // Shopify themes often embed product JSON in <script type="application/json"> blocks
       const rawBlocks = await page.$$eval(
         'script[type="application/json"], script[data-product-json]',
         els => els.map(el => el.textContent ?? '')
@@ -80,14 +64,5 @@ export class FirstClubScraper extends BaseScraper {
     } catch {
       return []
     }
-  }
-
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 10000)
-    })
   }
 }

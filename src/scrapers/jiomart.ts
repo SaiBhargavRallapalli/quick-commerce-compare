@@ -9,7 +9,6 @@ export class JioMartScraper extends BaseScraper {
   async scrape(query: string, location: Location, context: BrowserContext): Promise<Product[]> {
     const page = await context.newPage()
     try {
-      await this.blockHeavyResources(page)
       return await this._scrape(page, query, location)
     } finally {
       await page.close()
@@ -33,42 +32,16 @@ export class JioMartScraper extends BaseScraper {
         { name: 'longitude', value: String(location.lon), domain: '.jiomart.com', path: '/' },
       ])
 
-      // Step 1: Load homepage to establish session + cookies
-      await page.goto('https://www.jiomart.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
-      await page.waitForTimeout(2000)
+      const searchUrl = `https://www.jiomart.com/search?q=${encodeURIComponent(query)}`
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
 
-      // Step 2: Try search with query param (most SPAs support this)
-      const searchUrls = [
-        `https://www.jiomart.com/search?q=${encodeURIComponent(query)}`,
-        `https://www.jiomart.com/search#${encodeURIComponent(query)}`,
-        `https://www.jiomart.com/catalogsearch/result/?q=${encodeURIComponent(query)}`,
-      ]
-
-      for (const url of searchUrls) {
-        if (products.length >= 3) break
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {})
-        await page.waitForTimeout(3000)
-      }
-
-      await Promise.race([
-        this._waitFor(products, 3),
-        page.waitForTimeout(8000),
-      ])
+      await this.waitForMinProducts(products)
 
       if (products.length > 0) return products
 
-      return await this.extractByPriceDOM(page, 'jiomart', `https://www.jiomart.com/search?q=${encodeURIComponent(query)}`)
+      return await this.extractByPriceDOM(page, 'jiomart', searchUrl)
     } finally {
       unsubscribe()
     }
-  }
-
-  private _waitFor(arr: Product[], min: number): Promise<void> {
-    return new Promise(resolve => {
-      const iv = setInterval(() => {
-        if (arr.length >= min) { clearInterval(iv); resolve() }
-      }, 300)
-      setTimeout(() => { clearInterval(iv); resolve() }, 10000)
-    })
   }
 }

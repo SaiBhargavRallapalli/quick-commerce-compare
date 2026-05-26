@@ -27,8 +27,8 @@ const SCRAPERS = [
   new AmazonNowScraper(),
 ]
 
-// Max 3 concurrent Playwright pages to avoid OOM; HTTP-only scrapers bypass this
-const browserLimit = pLimit(3)
+// Max 5 concurrent Playwright pages (balance speed vs memory)
+const browserLimit = pLimit(5)
 const noLimit = pLimit(Infinity)
 
 type Tagged = { result: PlatformResult; idx: number }
